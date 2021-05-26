@@ -7,6 +7,11 @@ const CommandType = enum(u8) {
     CAP,
     NICK,
     USER,
+    MODE,
+    WHOIS,
+    PING,
+    PONG,
+    QUIT,
 };
 
 pub const Message = struct {

@@ -40,13 +40,18 @@ const PollFdList = struct {
 
 const ClientState = struct {
     address: std.net.Address,
+    stream: std.net.Stream,
     nick: ?[]const u8 = null,
+
+    const Self = @This();
 
     pub fn onMessage(self: *Self, message: Message) !void {
         switch (message.command) {
             .NICK => {
                 std.log.info("set nick to {s}", .{message.params});
                 self.nick = message.params;
+
+                try self.stream.writer().print("001 AAAA :Welcome to sex, {s}\r\n", .{self.nick});
             },
             else => {
                 std.log.info("ignored command {}", .{message.command});
@@ -55,9 +60,10 @@ const ClientState = struct {
     }
 };
 
-const ClientStateMap = std.AutoHashMap(std.os.fd_t, ClientState);
+const ClientStateMap = std.AutoHashMap(std.os.fd_t, *ClientState);
 
 const State = struct {
+    allocator: *std.mem.Allocator,
     sockets: *PollFdList,
     server: *std.net.StreamServer,
     client_state_map: ClientStateMap,
@@ -72,12 +78,19 @@ const State = struct {
         return Self{
             .sockets = sockets,
             .server = server,
+            .allocator = allocator,
             .client_state_map = ClientStateMap.init(allocator),
         };
     }
 
     pub fn deinit(self: *Self) void {
         self.sockets.deinit();
+
+        var it = self.client_state_map.iterator();
+        while (it.next()) |entry| {
+            self.allocator.destroy(entry.value);
+        }
+
         self.client_state_map.deinit();
     }
 
@@ -85,7 +98,13 @@ const State = struct {
         var conn = try self.server.accept();
         std.log.info("new client fd={d}", .{conn.stream.handle});
         try self.sockets.addFd(conn.stream.handle);
-        try self.client_state_map.put(conn.stream.handle, .{ .address = conn.address });
+
+        var state_ptr = try self.allocator.create(ClientState);
+        state_ptr.* = .{
+            .address = conn.address,
+            .stream = conn.stream,
+        };
+        try self.client_state_map.put(conn.stream.handle, state_ptr);
     }
 
     pub fn onClientMessage(self: *Self, client_fd: std.os.fd_t) !void {
@@ -106,7 +125,9 @@ const State = struct {
             const message = try Message.parse(line);
             std.log.info("parsed message: {}", .{message});
 
+            std.log.info("state pre: {}", .{state});
             try state.onMessage(message);
+            std.log.info("state post: {}", .{state});
         }
     }
 };
@@ -132,7 +153,9 @@ pub fn main() anyerror!void {
     std.log.info("opened signalfd at fd {d}", .{signal_fd});
 
     // setup tcp server socket
-    var server = std.net.StreamServer.init(std.net.StreamServer.Options{});
+    var server = std.net.StreamServer.init(.{
+        .reuse_address = true,
+    });
     defer server.deinit();
 
     var addr = try std.net.Address.parseIp4("0.0.0.0", 6667);
