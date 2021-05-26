@@ -51,7 +51,12 @@ const ClientState = struct {
                 std.log.info("set nick to {s}", .{message.params});
                 self.nick = message.params;
 
-                try self.stream.writer().print("001 AAAA :Welcome to sex, {s}\r\n", .{self.nick});
+                try self.stream.writer().print("001 AAAA :Welcome to the shit network, {s}\r\n", .{self.nick});
+                try self.stream.writer().print("002 AAAA :Your host is shitircd, running version 6.9.6.9\r\n", .{});
+                try self.stream.writer().print("003 AAAA :This server was created ON THE END OF TIME\r\n", .{});
+            },
+            .PING => {
+                try self.stream.writer().print("PONG\r\n", .{});
             },
             else => {
                 std.log.info("ignored command {}", .{message.command});
