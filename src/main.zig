@@ -1,4 +1,5 @@
 const std = @import("std");
+const Message = @import("message.zig").Message;
 
 fn sigemptyset(set: *std.os.sigset_t) void {
     for (set) |*val| {
@@ -65,16 +66,27 @@ const State = struct {
 
     pub fn onNewClient(self: *Self) !void {
         var conn = try self.server.accept();
+        std.log.info("new client fd={d}", .{conn.stream.handle});
         try self.sockets.addFd(conn.stream.handle);
         try self.client_addr_map.put(conn.stream.handle, conn.address);
     }
 
     pub fn onClientMessage(self: *Self, client_fd: std.os.fd_t) !void {
-        var buf: [256]u8 = undefined;
+        var buf: [2048]u8 = undefined;
         var sock = std.net.Stream{ .handle = client_fd };
         const read = try sock.read(&buf);
-        const msg = buf[0..read];
-        std.log.info("client sent message awooga: '{s}'", .{msg});
+        if (read == 0) return error.Closed;
+        const message_data = buf[0..read];
+        std.log.info("client fd={d} sent message: '{s}'", .{ client_fd, message_data });
+
+        var it = std.mem.split(message_data, "\r\n");
+        while (it.next()) |line| {
+            if (line.len == 0) continue;
+
+            // parse message_data into message struct
+            const message = try Message.parse(line);
+            std.log.info("parsed message: {}", .{message});
+        }
     }
 };
 
