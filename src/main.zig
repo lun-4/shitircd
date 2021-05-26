@@ -38,12 +38,29 @@ const PollFdList = struct {
     }
 };
 
-const ClientAddrMap = std.AutoHashMap(std.os.fd_t, std.net.Address);
+const ClientState = struct {
+    address: std.net.Address,
+    nick: ?[]const u8 = null,
+
+    pub fn onMessage(self: *Self, message: Message) !void {
+        switch (message.command) {
+            .NICK => {
+                std.log.info("set nick to {s}", .{message.params});
+                self.nick = message.params;
+            },
+            else => {
+                std.log.info("ignored command {}", .{message.command});
+            },
+        }
+    }
+};
+
+const ClientStateMap = std.AutoHashMap(std.os.fd_t, ClientState);
 
 const State = struct {
     sockets: *PollFdList,
     server: *std.net.StreamServer,
-    client_addr_map: ClientAddrMap,
+    client_state_map: ClientStateMap,
 
     const Self = @This();
 
@@ -55,20 +72,20 @@ const State = struct {
         return Self{
             .sockets = sockets,
             .server = server,
-            .client_addr_map = ClientAddrMap.init(allocator),
+            .client_state_map = ClientStateMap.init(allocator),
         };
     }
 
     pub fn deinit(self: *Self) void {
         self.sockets.deinit();
-        self.client_addr_map.deinit();
+        self.client_state_map.deinit();
     }
 
     pub fn onNewClient(self: *Self) !void {
         var conn = try self.server.accept();
         std.log.info("new client fd={d}", .{conn.stream.handle});
         try self.sockets.addFd(conn.stream.handle);
-        try self.client_addr_map.put(conn.stream.handle, conn.address);
+        try self.client_state_map.put(conn.stream.handle, .{ .address = conn.address });
     }
 
     pub fn onClientMessage(self: *Self, client_fd: std.os.fd_t) !void {
@@ -79,6 +96,8 @@ const State = struct {
         const message_data = buf[0..read];
         std.log.info("client fd={d} sent message: '{s}'", .{ client_fd, message_data });
 
+        var state = self.client_state_map.get(client_fd).?;
+
         var it = std.mem.split(message_data, "\r\n");
         while (it.next()) |line| {
             if (line.len == 0) continue;
@@ -86,6 +105,8 @@ const State = struct {
             // parse message_data into message struct
             const message = try Message.parse(line);
             std.log.info("parsed message: {}", .{message});
+
+            try state.onMessage(message);
         }
     }
 };
